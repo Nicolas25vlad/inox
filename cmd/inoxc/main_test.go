@@ -3,6 +3,7 @@ package main
 import (
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -40,6 +41,45 @@ func TestInspectAcceptsModeFlagAfterSource(t *testing.T) {
 	})
 	if !strings.Contains(output, "halt\n") || strings.Contains(output, "global _start") {
 		t.Fatalf("inspect --ir output = %q", output)
+	}
+}
+
+func TestRunExecutesProgramNatively(t *testing.T) {
+	if _, err := exec.LookPath("nasm"); err != nil {
+		t.Skip("nasm is not installed")
+	}
+	if _, err := exec.LookPath("ld"); err != nil {
+		t.Skip("ld is not installed")
+	}
+	assertRunSucceeds(t, false)
+}
+
+func TestRunExecutesProgramWithQEMUUserMode(t *testing.T) {
+	if _, err := exec.LookPath("nasm"); err != nil {
+		t.Skip("nasm is not installed")
+	}
+	if _, err := exec.LookPath("ld"); err != nil {
+		t.Skip("ld is not installed")
+	}
+	if _, err := findQEMUUser(); err != nil {
+		t.Skip(err)
+	}
+	assertRunSucceeds(t, true)
+}
+
+func assertRunSucceeds(t *testing.T, vm bool) {
+	t.Helper()
+	directory := t.TempDir()
+	source := filepath.Join(directory, "program.ix")
+	if err := os.WriteFile(source, []byte("register value: u64 = 42\nhalt\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"run", source}
+	if vm {
+		args = append(args, "--vm")
+	}
+	if err := run(args); err != nil {
+		t.Fatalf("run(vm=%v): %v", vm, err)
 	}
 }
 

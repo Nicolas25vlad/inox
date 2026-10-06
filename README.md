@@ -21,6 +21,17 @@ Inspect the intermediate representation or generated assembly:
 ./inoxc inspect examples/basic.ix --asm
 ```
 
+Assemble, link, and execute a program natively or through QEMU user-mode:
+
+```sh
+./inoxc run examples/basic.ix
+./inoxc run examples/basic.ix --vm
+```
+
+`run --vm` looks for `qemu-x86_64` or `qemu-x86_64-static` in `PATH`. Both run the generated Linux ELF as a guest process; they do not boot a virtual machine.
+
+Assembling and linking require `nasm` and GNU `ld` in `PATH`.
+
 The v0.1 language includes `u8`, `u16`, `u32`, and `u64` virtual registers; `move`, `add`, `sub`, `compare`, `jump`, `jump_if`, and `halt`. Up to four virtual registers are allocated to `rax`, `rbx`, `rcx`, and `rdx` (using the matching width aliases). Register pinning syntax is parsed but reports that pinning is not implemented yet.
 
 `halt` emits the Linux x86-64 exit syscall. The generated NASM file can be assembled and linked with:

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -15,6 +17,10 @@ import (
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) {
+			os.Exit(exitError.ExitCode())
+		}
 		os.Exit(1)
 	}
 }
@@ -28,9 +34,86 @@ func run(args []string) error {
 		return build(args[1:])
 	case "inspect":
 		return inspect(args[1:])
+	case "run":
+		return runProgram(args[1:])
 	default:
 		return usageError()
 	}
+}
+
+func runProgram(args []string) error {
+	flags := flag.NewFlagSet("run", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	vm := flags.Bool("vm", false, "run the Linux ELF with QEMU user-mode")
+	if err := flags.Parse(flagsBeforePositionals(args, nil)); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return fmt.Errorf("usage: inoxc run [--vm] file.ix")
+	}
+	input := flags.Arg(0)
+	var runner string
+	if *vm {
+		var err error
+		runner, err = findQEMUUser()
+		if err != nil {
+			return err
+		}
+	}
+	nasm, err := exec.LookPath("nasm")
+	if err != nil {
+		return fmt.Errorf("nasm is required for run: %w", err)
+	}
+	linker, err := exec.LookPath("ld")
+	if err != nil {
+		return fmt.Errorf("ld is required for run: %w", err)
+	}
+	result, err := compileFile(input)
+	if err != nil {
+		return err
+	}
+	tempDir, err := os.MkdirTemp("", "inox-run-")
+	if err != nil {
+		return fmt.Errorf("create temporary build directory: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	assembly := filepath.Join(tempDir, "program.asm")
+	object := filepath.Join(tempDir, "program.o")
+	executable := filepath.Join(tempDir, "program")
+	if err := os.WriteFile(assembly, []byte(result.Assembly), 0o600); err != nil {
+		return fmt.Errorf("write temporary assembly: %w", err)
+	}
+	if err := runTool(nasm, "-felf64", assembly, "-o", object); err != nil {
+		return fmt.Errorf("assemble with NASM: %w", err)
+	}
+	if err := runTool(linker, "-o", executable, object); err != nil {
+		return fmt.Errorf("link ELF: %w", err)
+	}
+	if runner == "" {
+		return runTool(executable)
+	}
+	if err := runTool(runner, executable); err != nil {
+		return fmt.Errorf("run with QEMU: %w", err)
+	}
+	return nil
+}
+
+func findQEMUUser() (string, error) {
+	for _, name := range []string{"qemu-x86_64", "qemu-x86_64-static"} {
+		if path, err := exec.LookPath(name); err == nil {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("qemu-x86_64 is required for --vm (qemu-x86_64-static is also supported)")
+}
+
+func runTool(path string, args ...string) error {
+	command := exec.Command(path, args...)
+	command.Stdin = os.Stdin
+	command.Stdout = os.Stdout
+	command.Stderr = os.Stderr
+	return command.Run()
 }
 
 func build(args []string) error {
