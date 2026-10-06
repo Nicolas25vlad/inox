@@ -1,2 +1,2 @@
-register value: u64 = 42
+register value: u64 = 42 @rax
 halt

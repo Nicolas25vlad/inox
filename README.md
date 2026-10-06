@@ -10,7 +10,7 @@ Inox é uma linguagem experimental de baixo nível. Você escreve operações so
 
 ```inox
 register a: u64 = 5
-register b: u64 = 10
+register b: u64 = 10 @rbx
 
 add a, b
 compare a, 15
@@ -60,11 +60,12 @@ ld -o build/basic build/basic.o
 
 - Tipos inteiros sem sinal: `u8`, `u16`, `u32` e `u64`.
 - Instruções: `move`, `add`, `sub`, `compare`, `jump`, `jump_if` e `halt`.
-- Até quatro registradores virtuais, alocados em `rax`, `rbx`, `rcx` e `rdx`, com aliases de largura correspondentes.
+- Até 14 registradores virtuais, alocados entre registradores gerais x86-64; o tipo seleciona o alias de largura (`rax`, `eax`, `ax`, `al`, por exemplo).
+- Pinning opcional para controlar um registrador físico: `register result: u64 @rax`.
 - Diagnósticos de lexer, parser e análise semântica com arquivo, linha e coluna.
 - `halt` encerra o processo Linux com o syscall de saída.
 
-Pinning (`@rax`) é reconhecido pela sintaxe, mas ainda não é implementado. A versão atual não tem strings, I/O da linguagem, biblioteca padrão, alocação de registradores além dos quatro disponíveis ou imagem bootável para `qemu-system-x86_64`.
+`rsp` fica reservado para a stack, e `r11` para temporários do backend. A versão atual não tem strings, operações explícitas de memória, I/O da linguagem, biblioteca padrão ou imagem bootável para `qemu-system-x86_64`.
 
 ## Desenvolvimento
 

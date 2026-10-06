@@ -45,6 +45,7 @@ type RegisterDecl struct {
 	Type        Type
 	Initializer *uint64
 	Pin         string
+	PinPos      diagnostic.Position
 	Pos         diagnostic.Position
 }
 

@@ -1,5 +1,5 @@
 register a: u64 = 5
-register b: u64 = 10
+register b: u64 = 10 @rbx
 
 add a, b
 compare a, 15

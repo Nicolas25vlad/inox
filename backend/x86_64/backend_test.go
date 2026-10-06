@@ -49,6 +49,21 @@ func TestGenerateManglesAssemblerReservedLabels(t *testing.T) {
 	}
 }
 
+func TestGenerateUsesPinnedRegisterAliases(t *testing.T) {
+	source := "register byte: u8 @r8\nsub byte, 1\nhalt\n"
+	program, err := parser.Parse("pin.ix", source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	irProgram, err := semantic.Analyze("pin.ix", source, program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assembly := Generate(irProgram); !strings.Contains(assembly, "sub r8b, 1") {
+		t.Fatalf("pinned byte register alias missing:\n%s", assembly)
+	}
+}
+
 func TestGenerateUsesScratchForLarge64BitArithmeticImmediate(t *testing.T) {
 	source := "register value: u64\nadd value, 18446744073709551615\nhalt\n"
 	program, err := parser.Parse("large.ix", source)

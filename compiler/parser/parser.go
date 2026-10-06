@@ -108,6 +108,7 @@ func (p *parser) parseRegister(start lexer.Token) (ast.Statement, error) {
 			return nil, err
 		}
 		decl.Pin = pin.Lexeme
+		decl.PinPos = pin.Pos
 	}
 	return decl, nil
 }

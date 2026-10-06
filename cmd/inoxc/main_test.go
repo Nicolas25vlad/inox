@@ -64,14 +64,18 @@ func TestRunExecutesProgramWithQEMUUserMode(t *testing.T) {
 	if _, err := findQEMUUser(); err != nil {
 		t.Skip(err)
 	}
-	assertRunSucceeds(t, true)
+	assertRunSourceSucceeds(t, "register byte: u8 = 42 @r8\nsub byte, 1\nhalt\n", true)
 }
 
 func assertRunSucceeds(t *testing.T, vm bool) {
+	assertRunSourceSucceeds(t, "register value: u64 = 42\nhalt\n", vm)
+}
+
+func assertRunSourceSucceeds(t *testing.T, program string, vm bool) {
 	t.Helper()
 	directory := t.TempDir()
 	source := filepath.Join(directory, "program.ix")
-	if err := os.WriteFile(source, []byte("register value: u64 = 42\nhalt\n"), 0o600); err != nil {
+	if err := os.WriteFile(source, []byte(program), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	args := []string{"run", source}

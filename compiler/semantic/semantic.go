@@ -8,13 +8,26 @@ import (
 	"inox/compiler/ir"
 )
 
-var physicalRegisters = []string{"rax", "rbx", "rcx", "rdx"}
+var physicalRegisters = []string{
+	"rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp",
+	"r8", "r9", "r10", "r12", "r13", "r14", "r15",
+}
 
 var registerAliases = map[string]map[ast.Type]string{
 	"rax": {ast.U8: "al", ast.U16: "ax", ast.U32: "eax", ast.U64: "rax"},
 	"rbx": {ast.U8: "bl", ast.U16: "bx", ast.U32: "ebx", ast.U64: "rbx"},
 	"rcx": {ast.U8: "cl", ast.U16: "cx", ast.U32: "ecx", ast.U64: "rcx"},
 	"rdx": {ast.U8: "dl", ast.U16: "dx", ast.U32: "edx", ast.U64: "rdx"},
+	"rsi": {ast.U8: "sil", ast.U16: "si", ast.U32: "esi", ast.U64: "rsi"},
+	"rdi": {ast.U8: "dil", ast.U16: "di", ast.U32: "edi", ast.U64: "rdi"},
+	"rbp": {ast.U8: "bpl", ast.U16: "bp", ast.U32: "ebp", ast.U64: "rbp"},
+	"r8":  {ast.U8: "r8b", ast.U16: "r8w", ast.U32: "r8d", ast.U64: "r8"},
+	"r9":  {ast.U8: "r9b", ast.U16: "r9w", ast.U32: "r9d", ast.U64: "r9"},
+	"r10": {ast.U8: "r10b", ast.U16: "r10w", ast.U32: "r10d", ast.U64: "r10"},
+	"r12": {ast.U8: "r12b", ast.U16: "r12w", ast.U32: "r12d", ast.U64: "r12"},
+	"r13": {ast.U8: "r13b", ast.U16: "r13w", ast.U32: "r13d", ast.U64: "r13"},
+	"r14": {ast.U8: "r14b", ast.U16: "r14w", ast.U32: "r14d", ast.U64: "r14"},
+	"r15": {ast.U8: "r15b", ast.U16: "r15w", ast.U32: "r15d", ast.U64: "r15"},
 }
 
 type registerInfo struct {
@@ -24,34 +37,70 @@ type registerInfo struct {
 
 func Analyze(file, source string, program *ast.Program) (*ir.Program, error) {
 	registers := make(map[string]registerInfo)
+	declarations := make([]ast.RegisterDecl, 0)
+	declaredNames := make(map[string]diagnostic.Position)
+	pinnedOwners := make(map[string]string)
 	labels := make(map[string]diagnostic.Position)
 	result := &ir.Program{}
 
 	for _, statement := range program.Statements {
 		switch node := statement.(type) {
 		case ast.RegisterDecl:
-			if previous, exists := registers[node.Name]; exists {
-				return nil, diagnostic.New(file, source, node.Pos, fmt.Sprintf("duplicate register '%s' (first declared at %d:%d)", node.Name, previous.declared.Line, previous.declared.Column))
+			if previous, exists := declaredNames[node.Name]; exists {
+				return nil, diagnostic.New(file, source, node.Pos, fmt.Sprintf("duplicate register '%s' (first declared at %d:%d)", node.Name, previous.Line, previous.Column))
 			}
-			if node.Pin != "" {
-				return nil, diagnostic.New(file, source, node.Pos, "register pinning is not supported in v0.1")
-			}
+			declaredNames[node.Name] = node.Pos
 			if node.Type.Bits() == 0 {
 				return nil, diagnostic.New(file, source, node.Pos, fmt.Sprintf("invalid type %q", node.Type))
 			}
-			if len(registers) >= len(physicalRegisters) {
-				return nil, diagnostic.New(file, source, node.Pos, "v0.1 supports up to 4 virtual registers")
+			if node.Pin != "" {
+				pinPos := node.PinPos
+				if pinPos.Line == 0 {
+					pinPos = node.Pos
+				}
+				if node.Pin == "rsp" {
+					return nil, diagnostic.New(file, source, pinPos, "'rsp' is reserved for the stack pointer")
+				}
+				if node.Pin == "r11" {
+					return nil, diagnostic.New(file, source, pinPos, "'r11' is reserved by the x86-64 backend")
+				}
+				if _, valid := registerAliases[node.Pin]; !valid {
+					return nil, diagnostic.New(file, source, pinPos, fmt.Sprintf("unknown physical register '%s'", node.Pin))
+				}
+				if previous, exists := pinnedOwners[node.Pin]; exists {
+					return nil, diagnostic.New(file, source, pinPos, fmt.Sprintf("physical register '%s' is pinned more than once (also used by '%s')", node.Pin, previous))
+				}
+				pinnedOwners[node.Pin] = node.Name
 			}
-			physical := physicalRegisters[len(registers)]
-			register := ir.Register{Name: node.Name, Type: node.Type, Physical: physical, Pos: node.Pos}
-			registers[node.Name] = registerInfo{register: register, declared: node.Pos}
-			result.Registers = append(result.Registers, register)
+			declarations = append(declarations, node)
 		case ast.Label:
 			if _, exists := labels[node.Name]; exists {
 				return nil, diagnostic.New(file, source, node.Pos, fmt.Sprintf("duplicate label '%s'", node.Name))
 			}
 			labels[node.Name] = node.Pos
 		}
+	}
+	usedPhysical := make(map[string]bool, len(pinnedOwners))
+	for physical := range pinnedOwners {
+		usedPhysical[physical] = true
+	}
+	for _, declaration := range declarations {
+		physical := declaration.Pin
+		if physical == "" {
+			for _, candidate := range physicalRegisters {
+				if !usedPhysical[candidate] {
+					physical = candidate
+					usedPhysical[physical] = true
+					break
+				}
+			}
+		}
+		if physical == "" {
+			return nil, diagnostic.New(file, source, declaration.Pos, fmt.Sprintf("no physical registers available for virtual register '%s'", declaration.Name))
+		}
+		register := ir.Register{Name: declaration.Name, Type: declaration.Type, Physical: physical, Pos: declaration.Pos}
+		registers[declaration.Name] = registerInfo{register: register, declared: declaration.Pos}
+		result.Registers = append(result.Registers, register)
 	}
 
 	lookupRegister := func(name string, pos diagnostic.Position) (ir.Register, error) {

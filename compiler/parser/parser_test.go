@@ -36,7 +36,7 @@ func TestParseReportsReadableSyntaxError(t *testing.T) {
 	}
 }
 
-func TestParsePinningForFutureSemanticRejection(t *testing.T) {
+func TestParsePinnedRegister(t *testing.T) {
 	program, err := Parse("pin.ix", "register result: u64 @rax\n")
 	if err != nil {
 		t.Fatal(err)
@@ -44,6 +44,9 @@ func TestParsePinningForFutureSemanticRejection(t *testing.T) {
 	decl := program.Statements[0].(ast.RegisterDecl)
 	if decl.Pin != "rax" {
 		t.Fatalf("pin = %q, want rax", decl.Pin)
+	}
+	if decl.PinPos.Line != 1 || decl.PinPos.Column != 23 {
+		t.Fatalf("pin location = %d:%d, want 1:23", decl.PinPos.Line, decl.PinPos.Column)
 	}
 }
 
