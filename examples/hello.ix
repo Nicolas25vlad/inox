@@ -1,0 +1,2 @@
+register value: u64 = 42
+halt

@@ -1,0 +1,10 @@
+register a: u64 = 5
+register b: u64 = 10
+
+add a, b
+compare a, 15
+jump_if equal, finished
+sub a, 1
+
+finished:
+halt
