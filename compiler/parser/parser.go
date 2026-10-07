@@ -21,8 +21,21 @@ func Parse(file, source string) (*ast.Program, error) {
 func ParseTokens(file, source string, tokens []lexer.Token) (*ast.Program, error) {
 	p := &parser{file: file, source: source, tokens: tokens}
 	program := &ast.Program{}
+	targetDeclared := false
 	for p.current().Kind != lexer.TokenEOF {
 		if p.match(lexer.TokenNewline) {
+			continue
+		}
+		if p.current().Kind == lexer.TokenIdentifier && p.current().Lexeme == "target" {
+			if targetDeclared {
+				return nil, p.errorAt(p.current(), "target may only be declared once")
+			}
+			target, err := p.parseTarget()
+			if err != nil {
+				return nil, err
+			}
+			program.Target = target
+			targetDeclared = true
 			continue
 		}
 		statement, err := p.parseStatement()
@@ -32,6 +45,21 @@ func ParseTokens(file, source string, tokens []lexer.Token) (*ast.Program, error
 		program.Statements = append(program.Statements, statement)
 	}
 	return program, nil
+}
+
+func (p *parser) parseTarget() (string, error) {
+	p.advance()
+	target, err := p.expect(lexer.TokenIdentifier, "expected target name after 'target'")
+	if err != nil {
+		return "", err
+	}
+	if target.Lexeme != ast.TargetBoot16 {
+		return "", p.errorAt(target, "unknown target %q", target.Lexeme)
+	}
+	if err := p.finishLine(); err != nil {
+		return "", err
+	}
+	return target.Lexeme, nil
 }
 
 type parser struct {
@@ -56,6 +84,40 @@ func (p *parser) parseStatement() (ast.Statement, error) {
 			return nil, err
 		}
 		return decl, nil
+	}
+	if start.Lexeme == "asm" {
+		block, err := p.expect(lexer.TokenAssemblyBlock, "expected '{' and assembly source after 'asm'")
+		if err != nil {
+			return nil, err
+		}
+		if err := p.finishLine(); err != nil {
+			return nil, err
+		}
+		return ast.AssemblyBlock{Source: block.Lexeme, Pos: start.Pos}, nil
+	}
+	if start.Lexeme == "stage2" {
+		block, err := p.expect(lexer.TokenStage2Block, "expected '{' and assembly source after 'stage2'")
+		if err != nil {
+			return nil, err
+		}
+		if err := p.finishLine(); err != nil {
+			return nil, err
+		}
+		return ast.Stage2Block{Source: block.Lexeme, Pos: start.Pos}, nil
+	}
+	if start.Lexeme == "bios_print" {
+		literal, err := p.expect(lexer.TokenString, "expected quoted string after 'bios_print'")
+		if err != nil {
+			return nil, err
+		}
+		value, err := strconv.Unquote(literal.Lexeme)
+		if err != nil {
+			return nil, p.errorAt(literal, "invalid string literal")
+		}
+		if err := p.finishLine(); err != nil {
+			return nil, err
+		}
+		return ast.BIOSPrint{Text: value, Pos: start.Pos}, nil
 	}
 	if p.match(lexer.TokenColon) {
 		if err := p.finishLine(); err != nil {

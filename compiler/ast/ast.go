@@ -16,6 +16,11 @@ const (
 	U64 Type = "u64"
 )
 
+const (
+	TargetLinuxX8664 = "linux-x86_64"
+	TargetBoot16     = "boot16"
+)
+
 func (t Type) Bits() int {
 	switch t {
 	case U8:
@@ -33,6 +38,7 @@ func (t Type) Bits() int {
 
 type Program struct {
 	Statements []Statement
+	Target     string
 }
 
 type Statement interface {
@@ -59,6 +65,30 @@ type Label struct {
 
 func (s Label) Position() diagnostic.Position { return s.Pos }
 func (Label) isStatement()                    {}
+
+type AssemblyBlock struct {
+	Source string
+	Pos    diagnostic.Position
+}
+
+func (s AssemblyBlock) Position() diagnostic.Position { return s.Pos }
+func (AssemblyBlock) isStatement()                    {}
+
+type Stage2Block struct {
+	Source string
+	Pos    diagnostic.Position
+}
+
+func (s Stage2Block) Position() diagnostic.Position { return s.Pos }
+func (Stage2Block) isStatement()                    {}
+
+type BIOSPrint struct {
+	Text string
+	Pos  diagnostic.Position
+}
+
+func (s BIOSPrint) Position() diagnostic.Position { return s.Pos }
+func (BIOSPrint) isStatement()                    {}
 
 type Opcode string
 
@@ -94,6 +124,9 @@ func (Instruction) isStatement()                    {}
 
 func Format(program *Program) string {
 	var out strings.Builder
+	if program.Target != "" {
+		fmt.Fprintf(&out, "target %s\n", program.Target)
+	}
 	for _, statement := range program.Statements {
 		switch s := statement.(type) {
 		case RegisterDecl:
@@ -106,6 +139,12 @@ func Format(program *Program) string {
 			}
 		case Label:
 			fmt.Fprintf(&out, "%s:", s.Name)
+		case AssemblyBlock:
+			fmt.Fprintf(&out, "asm {\n%s}", s.Source)
+		case Stage2Block:
+			fmt.Fprintf(&out, "stage2 {\n%s}", s.Source)
+		case BIOSPrint:
+			fmt.Fprintf(&out, "bios_print %q", s.Text)
 		case Instruction:
 			fmt.Fprintf(&out, "%s", s.Op)
 			switch s.Op {

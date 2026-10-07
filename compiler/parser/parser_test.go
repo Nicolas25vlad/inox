@@ -50,6 +50,43 @@ func TestParsePinnedRegister(t *testing.T) {
 	}
 }
 
+func TestParseBoot16TargetAndBIOSStatements(t *testing.T) {
+	source := "target boot16\nbios_print \"Inox\\nboot\"\nasm {\n    mov ah, 0x0e\n    int 0x10\n}\nstage2 {\n    mov ax, 0x1234\n}\n"
+	program, err := Parse("boot.ix", source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if program.Target != ast.TargetBoot16 {
+		t.Fatalf("target = %q, want %q", program.Target, ast.TargetBoot16)
+	}
+	if len(program.Statements) != 3 {
+		t.Fatalf("got %d statements, want 3", len(program.Statements))
+	}
+	print, ok := program.Statements[0].(ast.BIOSPrint)
+	if !ok || print.Text != "Inox\nboot" {
+		t.Fatalf("first statement = %#v, want decoded BIOS text", program.Statements[0])
+	}
+	block, ok := program.Statements[1].(ast.AssemblyBlock)
+	if !ok || !strings.Contains(block.Source, "mov ah, 0x0e") || !strings.Contains(block.Source, "int 0x10") {
+		t.Fatalf("second statement = %#v, want raw BIOS assembly", program.Statements[1])
+	}
+	stage2, ok := program.Statements[2].(ast.Stage2Block)
+	if !ok || !strings.Contains(stage2.Source, "mov ax, 0x1234") {
+		t.Fatalf("third statement = %#v, want second-stage assembly", program.Statements[2])
+	}
+}
+
+func TestParseRejectsDuplicateAndUnknownTargets(t *testing.T) {
+	for _, tc := range []struct{ source, want string }{
+		{"target boot16\ntarget boot16\n", "target may only be declared once"},
+		{"target arm64\n", "unknown target \"arm64\""},
+	} {
+		if _, err := Parse("target.ix", tc.source); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("Parse(%q) error = %v, want containing %q", tc.source, err, tc.want)
+		}
+	}
+}
+
 func TestParseDecimalAndHexNumbers(t *testing.T) {
 	program, err := Parse("numbers.ix", "register decimal: u16 = 010\nregister hex: u16 = 0xff\n")
 	if err != nil {

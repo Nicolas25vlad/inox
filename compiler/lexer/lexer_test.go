@@ -63,6 +63,44 @@ func TestLexRejectsNonASCIIIdentifierCharacters(t *testing.T) {
 	}
 }
 
+func TestLexPreservesOpaqueAssemblyBlock(t *testing.T) {
+	source := "target boot16\nasm {\n    mov ax, 0x7c00\n    jmp $ ; } in comment\n    db '}'\n}\nstage2 {\n    mov ax, 0x1234\n}\n"
+	tokens, err := Lex("boot.ix", source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var block Token
+	for _, token := range tokens {
+		if token.Kind == TokenAssemblyBlock {
+			block = token
+			break
+		}
+	}
+	if block.Kind != TokenAssemblyBlock {
+		t.Fatal("assembly block token not found")
+	}
+	want := "\n    mov ax, 0x7c00\n    jmp $ ; } in comment\n    db '}'\n"
+	if got := block.Lexeme; got != want {
+		t.Fatalf("assembly block = %q, want %q", got, want)
+	}
+	for _, token := range tokens {
+		if token.Kind == TokenStage2Block && strings.Contains(token.Lexeme, "mov ax, 0x1234") {
+			return
+		}
+	}
+	t.Fatal("stage2 block token not found")
+}
+
+func TestLexSupportsQuotedStringsForInstructions(t *testing.T) {
+	tokens, err := Lex("print.ix", "bios_print \"Inox\\nboot\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := tokens[1].Kind; got != TokenString {
+		t.Fatalf("string token kind = %v, want string", got)
+	}
+}
+
 func TestFormatListsTokensAndEndOfFile(t *testing.T) {
 	tokens, err := Lex("format.ix", "halt\n")
 	if err != nil {

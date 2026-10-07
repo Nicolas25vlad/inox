@@ -1,0 +1,23 @@
+target boot16
+
+# Impressão na tela pelo serviço BIOS INT 10h.
+bios_print "Iniciando stage 1...\r\n"
+
+# O compilador inclui o stage 2 na imagem e o carrega com BIOS INT 13h.
+stage2 {
+    mov si, stage2_message
+.print:
+    lodsb
+    test al, al
+    jz .halt
+    mov ah, 0x0e
+    mov bx, 0x0007
+    int 0x10
+    jmp .print
+.halt:
+    cli
+    hlt
+    jmp .halt
+
+stage2_message db 'Stage 2 carregado pela BIOS!', 0
+}

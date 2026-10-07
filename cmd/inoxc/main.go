@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"inox/backend/boot16"
 	"inox/compiler"
 	"inox/compiler/ast"
 	"inox/compiler/lexer"
@@ -44,7 +45,7 @@ func run(args []string) error {
 func runProgram(args []string) error {
 	flags := flag.NewFlagSet("run", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
-	vm := flags.Bool("vm", false, "run the Linux ELF with QEMU user-mode")
+	vm := flags.Bool("vm", false, "run through QEMU (user-mode for Linux, system emulator for boot16)")
 	if err := flags.Parse(flagsBeforePositionals(args, nil)); err != nil {
 		return err
 	}
@@ -52,9 +53,18 @@ func runProgram(args []string) error {
 		return fmt.Errorf("usage: inoxc run [--vm] file.ix")
 	}
 	input := flags.Arg(0)
+	result, err := compileFile(input)
+	if err != nil {
+		return err
+	}
+	if result.Target == ast.TargetBoot16 {
+		if !*vm {
+			return fmt.Errorf("the boot16 target needs QEMU; run it with --vm")
+		}
+		return runBoot16(result, input)
+	}
 	var runner string
 	if *vm {
-		var err error
 		runner, err = findQEMUUser()
 		if err != nil {
 			return err
@@ -67,10 +77,6 @@ func runProgram(args []string) error {
 	linker, err := exec.LookPath("ld")
 	if err != nil {
 		return fmt.Errorf("ld is required for run: %w", err)
-	}
-	result, err := compileFile(input)
-	if err != nil {
-		return err
 	}
 	tempDir, err := os.MkdirTemp("", "inox-run-")
 	if err != nil {
@@ -108,6 +114,32 @@ func findQEMUUser() (string, error) {
 	return "", fmt.Errorf("qemu-x86_64 is required for --vm (qemu-x86_64-static is also supported)")
 }
 
+func findQEMUSystem() (string, error) {
+	for _, name := range []string{"qemu-system-x86_64", "qemu-system-i386"} {
+		if path, err := exec.LookPath(name); err == nil {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("qemu-system-x86_64 is required for the boot16 target")
+}
+
+func runBoot16(result *compiler.Result, sourcePath string) error {
+	qemu, err := findQEMUSystem()
+	if err != nil {
+		return err
+	}
+	tempDir, err := os.MkdirTemp("", "inox-boot16-")
+	if err != nil {
+		return fmt.Errorf("create temporary boot image directory: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+	image := filepath.Join(tempDir, "boot.img")
+	if err := assembleBootImage(result.Assembly, image, filepath.Dir(sourcePath)); err != nil {
+		return err
+	}
+	return runTool(qemu, "-machine", "pc", "-m", "16M", "-drive", "file="+image+",format=raw,if=floppy", "-boot", "order=a")
+}
+
 func runTool(path string, args ...string) error {
 	command := exec.Command(path, args...)
 	command.Stdin = os.Stdin
@@ -119,7 +151,7 @@ func runTool(path string, args ...string) error {
 func build(args []string) error {
 	flags := flag.NewFlagSet("build", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
-	output := flags.String("o", "", "output NASM file")
+	output := flags.String("o", "", "output file (assembly for Linux, boot image for boot16)")
 	if err := flags.Parse(flagsBeforePositionals(args, map[string]bool{"-o": true})); err != nil {
 		return err
 	}
@@ -131,13 +163,25 @@ func build(args []string) error {
 	if err != nil {
 		return err
 	}
+	isBoot16 := result.Target == ast.TargetBoot16
 	path := *output
 	if path == "" {
 		base := strings.TrimSuffix(filepath.Base(input), filepath.Ext(input))
-		path = filepath.Join("build", base+".asm")
+		extension := ".asm"
+		if isBoot16 {
+			extension = ".img"
+		}
+		path = filepath.Join("build", base+extension)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create output directory: %w", err)
+	}
+	if isBoot16 {
+		if err := assembleBootImage(result.Assembly, path, filepath.Dir(input)); err != nil {
+			return err
+		}
+		fmt.Printf("generated boot image %s\n", path)
+		return nil
 	}
 	if err := os.WriteFile(path, []byte(result.Assembly), 0o644); err != nil {
 		return fmt.Errorf("write assembly: %w", err)
@@ -171,7 +215,11 @@ func inspect(args []string) error {
 		fmt.Print(ast.Format(result.AST))
 	}
 	if *irOutput {
-		fmt.Print(result.IR.String())
+		if result.IR == nil {
+			fmt.Println("the boot16 target uses direct assembly and has no virtual-register IR")
+		} else {
+			fmt.Print(result.IR.String())
+		}
 	}
 	if *assembly || !selected {
 		fmt.Print(result.Assembly)
@@ -185,6 +233,38 @@ func compileFile(path string) (*compiler.Result, error) {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 	return compiler.Compile(path, string(source))
+}
+
+func assembleBootImage(assembly, output, includeDirectory string) error {
+	nasm, err := exec.LookPath("nasm")
+	if err != nil {
+		return fmt.Errorf("nasm is required to build boot16 images: %w", err)
+	}
+	tempDir, err := os.MkdirTemp("", "inox-nasm-")
+	if err != nil {
+		return fmt.Errorf("create temporary assembly directory: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+	assemblyPath := filepath.Join(tempDir, "boot.asm")
+	if err := os.WriteFile(assemblyPath, []byte(assembly), 0o600); err != nil {
+		return fmt.Errorf("write temporary boot assembly: %w", err)
+	}
+	includeDirectory, err = filepath.Abs(includeDirectory)
+	if err != nil {
+		return fmt.Errorf("resolve source directory for NASM includes: %w", err)
+	}
+	includePath := includeDirectory + string(os.PathSeparator)
+	if err := runTool(nasm, "-fbin", "-I", includePath, assemblyPath, "-o", output); err != nil {
+		return fmt.Errorf("assemble boot image with NASM: %w", err)
+	}
+	info, err := os.Stat(output)
+	if err != nil {
+		return fmt.Errorf("inspect generated boot image: %w", err)
+	}
+	if info.Size() != boot16.FloppyImageSize {
+		return fmt.Errorf("boot image must be a 1.44 MiB floppy; got %d bytes", info.Size())
+	}
+	return nil
 }
 
 func flagsBeforePositionals(args []string, valueFlags map[string]bool) []string {
@@ -210,4 +290,4 @@ func flagsBeforePositionals(args []string, valueFlags map[string]bool) []string 
 	return append(options, positionals...)
 }
 
-func usageError() error { return fmt.Errorf("usage: inoxc <build|inspect> ...") }
+func usageError() error { return fmt.Errorf("usage: inoxc <build|inspect|run> ...") }
